@@ -1,0 +1,108 @@
+# retro-crt: a CRT monitor for kitty (needs kitty >= 0.49).
+#
+#   custom_shaders retro-crt             a still picture: nothing redraws while idle
+#   custom_shaders retro-crt crt-live    ... plus afterglow, snow, flicker, hsync wobble (kitty redraws at 60 fps)
+#
+# The monitor (amber, green, white, ice, color; curved or flat) is not chosen here: every
+# monitor is compiled into the shader and picked at run time from kitty's background
+# colour, so switching never rebuilds anything. See retro-crt.slang, crt.conf and `crt`.
+#
+# The passes and their tunables are documented in retro-crt.slang. The
+# viewport_pos / viewport_size rectangles below MUST match the R_* constants
+# there. Every pass has animation_step 0 so an idle terminal redraws nothing;
+# crt-live.pipeline is what adds a 60 fps clock.
+
+textures a b persist
+
+# 0: phosphor afterglow: new frame vs decayed previous frame
+startgroup
+    animation_step 0
+    var int STAGE = 0
+    shaders retro-crt
+    output_texture a
+endgroup
+
+# 1: remember the phosphor image for the next frame
+startgroup
+    animation_step 0
+    var int STAGE = 1
+    shaders retro-crt
+    output_texture persist
+endgroup
+
+# 2: bloom: box downsample to 1/4 resolution
+startgroup
+    animation_step 0
+    var int STAGE = 2
+    viewport_pos 0 0
+    viewport_size 0.25 0.25
+    shaders retro-crt
+    output_texture b
+endgroup
+
+# 3: bloom: horizontal gaussian at 1/4
+startgroup
+    animation_step 0
+    var int STAGE = 3
+    viewport_pos 0 0
+    viewport_size 0.25 0.25
+    shaders retro-crt
+    output_texture a
+endgroup
+
+# 4: bloom: vertical gaussian at 1/4 (glow)
+startgroup
+    animation_step 0
+    var int STAGE = 4
+    viewport_pos 0.25 0
+    viewport_size 0.25 0.25
+    shaders retro-crt
+    output_texture b
+endgroup
+
+# 5: bloom: box downsample of the glow to 1/16
+startgroup
+    animation_step 0
+    var int STAGE = 5
+    viewport_pos 0 0.25
+    viewport_size 0.0625 0.0625
+    shaders retro-crt
+    output_texture a
+endgroup
+
+# 6: bloom: horizontal gaussian at 1/16
+startgroup
+    animation_step 0
+    var int STAGE = 6
+    viewport_pos 0.5 0
+    viewport_size 0.0625 0.0625
+    shaders retro-crt
+    output_texture b
+endgroup
+
+# 7: bloom: vertical gaussian at 1/16 (halo)
+startgroup
+    animation_step 0
+    var int STAGE = 7
+    viewport_pos 0 0.375
+    viewport_size 0.0625 0.0625
+    shaders retro-crt
+    output_texture a
+endgroup
+
+# 8: composite: the monitor itself
+startgroup
+    animation_step 0
+    var int STAGE = 8
+    shaders retro-crt
+endgroup
+
+# 9: tab-change glitch, only while its animation runs
+startgroup
+    var int STAGE = 9
+    animation_start tab-change
+    animation_stop 320
+    animation_curve linear
+    animation_step 16
+    shaders retro-crt
+endgroup

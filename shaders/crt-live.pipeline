@@ -1,0 +1,20 @@
+# crt-live: turns retro-crt from a still picture into a living monitor.
+#
+# Adds a full-screen group that asks kitty for a frame every 16 ms, and switches
+# on the parts of retro-crt that need one: phosphor afterglow (trails fade in
+# real time), animated snow, flicker, hum bar and hsync wobble.
+#
+# Cost: kitty redraws at ~60 fps for as long as the window is visible. Measured
+# on the RTX 2070 laptop this holds the GPU at ~36 W instead of ~19 W, and the
+# frame interval makes no difference (16, 33 and 50 ms all measured the same),
+# so it is a state change, not a per-frame cost. Leave this file out of
+# custom_shaders for a monitor that only redraws when text changes: ~0 W idle.
+#
+#   custom_shaders retro-crt crt-live
+
+var int LIVE = 1
+
+startgroup
+    animation_step 16
+    shaders retro-crt-pass
+endgroup
