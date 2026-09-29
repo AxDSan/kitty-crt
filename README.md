@@ -10,6 +10,7 @@ Made so that [omp](https://github.com/can1357/oh-my-pi) looks like it runs on a 
 
 <sub>Real pixels: <code>omp</code> in a <code>kitty-crt</code> window, captured after the shader with <code>kitten @ screenshot</code>.</sub>
 
+[![ci](https://img.shields.io/github/actions/workflow/status/AxDSan/kitty-crt/ci.yml?branch=main&label=ci)](https://github.com/AxDSan/kitty-crt/actions/workflows/ci.yml)
 ![kitty >= 0.49](https://img.shields.io/badge/kitty-%E2%89%A5%200.49-orange)
 ![shaders: Slang](https://img.shields.io/badge/shaders-Slang-blueviolet)
 ![license: MIT](https://img.shields.io/badge/license-MIT-green)
