@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+# crt-switch: turn the afterglow, snow, flicker and wobble (crt-live) on or off in the running kitty-crt window.
+#
+#   crt-switch live | static | toggle-live
+#
+# Monitors are switched instantly by `crt`. This is the one change that cannot be: crt-live adds a shader
+# group that makes kitty redraw at 60 fps, and kitty builds a changed pipeline on its main thread, which
+# freezes the window for ~6 s (measured). So the pipeline is built here first, in a separate process
+# (about 8 s), and applied afterwards (~0.3 s). crt.conf binds it to ctrl+shift+f12 with
+# `launch --type=background --allow-remote-control`, which is what gives this script its channel to the
+# window (KITTY_LISTEN_ON). The shader cache holds one pipeline, so after switching, the next kitty-crt
+# start rebuilds its default (about 8 s).
+set -euo pipefail
+set -f # the shader list below is word-split and must not glob
+
+kitty=${KITTY_CRT_BIN:-$HOME/.local/kitty.app/bin/kitty}
+kitten=$(dirname "$kitty")/kitten
+conf=${KITTY_CONFIG_DIRECTORY:-$HOME/.config/kitty}/crt.conf
+id=$PPID # the kitty that launched us; KITTY_PID may be stale, inherited from the terminal kitty-crt was started in
+run=${XDG_RUNTIME_DIR:-/tmp}
+state=$run/kitty-crt-$id.shaders
+log=${XDG_CACHE_HOME:-$HOME/.cache}/kitty/crt-switch.log
+
+exec 200>"$run/kitty-crt-$id.lock" # a low fd number could collide with kitty's remote control fd
+flock -n 200 || exit 0             # a switch for this window is already running (key repeat)
+mkdir -p "$(dirname "$log")"
+exec >"$log" 2>&1
+
+say() { notify-send -a kitty-crt -t "${2:-2500}" -h string:x-canonical-private-synchronous:kitty-crt CRT "$1" || true; }
+
+# What the window is showing now: what we applied last, else what it was started with.
+if [[ -r $state ]]; then
+    cur=$(<"$state")
+else
+    cur=$(tr '\0' '\n' <"/proc/$id/cmdline" 2>/dev/null | sed -n 's/^custom_shaders=//p' | tail -n1 || true)
+    [[ -n $cur ]] || cur=$(sed -n 's/^custom_shaders[[:space:]]\{1,\}//p' "$conf" | tail -n1)
+fi
+
+live=0 extras=()
+for t in $cur; do
+    case $t in
+    retro-crt) ;;
+    crt-live) live=1 ;;
+    *) extras+=("$t") ;;
+    esac
+done
+
+build() {
+    local s=retro-crt
+    ((live)) && s+=" crt-live"
+    ((${#extras[@]})) && s+=" ${extras[*]}"
+    printf '%s' "$s"
+}
+old=$(build)
+
+case ${1:-} in
+live) live=1 ;;
+static) live=0 ;;
+toggle-live) live=$((1 - live)) ;;
+*)
+    echo "usage: crt-switch live|static|toggle-live" >&2
+    exit 2
+    ;;
+esac
+
+new=$(build)
+label=static
+((live)) && label=live
+[[ $new != "$old" ]] || { say "$label (unchanged)"; exit 0; }
+[[ -n ${KITTY_LISTEN_ON:-} ]] || { say "No channel to kitty: run crt-switch from the keybinding in crt.conf" 6000; exit 1; }
+
+prewarm=$(
+    cat <<'PY'
+import os
+from kitty.shaders.slang import build_custom_shader_pipeline_glsl, merge_pipelines, parse_pipeline
+build_custom_shader_pipeline_glsl(merge_pipelines([parse_pipeline(n) for n in os.environ['CRT_SHADERS'].split()]))
+PY
+)
+
+say "$label: building shader..." 20000
+if ! CRT_SHADERS=$new "$kitty" +runpy "$prewarm"; then
+    say "$label: shader build failed, see $log" 10000
+    exit 1
+fi
+"$kitten" @ load-config -o "custom_shaders=$new"
+printf '%s\n' "$new" >"$state"
+say "$label"

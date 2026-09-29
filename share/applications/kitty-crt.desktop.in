@@ -1,0 +1,17 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Kitty CRT
+GenericName=Terminal Emulator
+Comment=kitty with a retro CRT monitor shader
+Exec=@BIN@/kitty-crt
+Icon=@ICON@
+Terminal=false
+Categories=System;TerminalEmulator;
+StartupNotify=true
+StartupWMClass=kitty-crt
+Actions=omp;
+
+[Desktop Action omp]
+Name=omp in the CRT
+Exec=@BIN@/omp-crt

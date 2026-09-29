@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# omp-crt: omp (oh-my-pi) inside the CRT. Extra arguments go to omp.
+# When omp exits you are left at a shell in the same window.
+# Monitor: CRT_MONITOR=green omp-crt   (amber green white ice color; `crt` switches it live)
+# The single quotes are deliberate: the inner interactive shell expands "$@" and "$SHELL", not this script.
+# shellcheck disable=SC2016
+exec "$(dirname "$(readlink -f "$0")")/kitty-crt" --title omp \
+    "${SHELL:-/bin/sh}" -ic 'omp "$@"; exec "$SHELL"' omp "$@"

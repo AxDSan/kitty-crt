@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# kitty-crt: kitty >= 0.49 with the retro-crt monitor (see crt.conf in your kitty config dir).
+#
+#   kitty-crt                       a plain shell
+#   kitty-crt omp                   run omp
+#   CRT_MONITOR=green kitty-crt omp start on another monitor (amber green white ice color)
+#   CRT_SHADERS="retro-crt" kitty-crt   a still monitor instead of crt.conf's custom_shaders (no idle redraws)
+#
+# Environment: KITTY_CRT_BIN (kitty >= 0.49, default ~/.local/kitty.app/bin/kitty),
+#              KITTY_CONFIG_DIRECTORY (default ~/.config/kitty).
+set -euo pipefail
+
+kitty="${KITTY_CRT_BIN:-$HOME/.local/kitty.app/bin/kitty}"
+[[ -x $kitty ]] || { echo "kitty-crt: $kitty not found; install kitty >= 0.49 (https://sw.kovidgoyal.net/kitty/binary/)" >&2; exit 1; }
+
+args=(--class kitty-crt --config "${KITTY_CONFIG_DIRECTORY:-$HOME/.config/kitty}/crt.conf")
+[[ -n ${CRT_SHADERS:-} ]] && args+=(-o "custom_shaders=$CRT_SHADERS")
+[[ -n ${CRT_MONITOR:-} ]] && args+=(-o "background=$("$(dirname "$(readlink -f "$0")")/crt" code "$CRT_MONITOR")")
+exec "$kitty" "${args[@]}" "$@"

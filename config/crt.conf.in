@@ -1,0 +1,47 @@
+# crt.conf -- your normal kitty.conf plus a CRT monitor. Used by `kitty-crt` / `omp-crt`.
+# Needs kitty >= 0.49 (custom shaders); a distro kitty older than that ignores all of this.
+include kitty.conf
+
+# If kitty.conf opens a session (startup_session), the CRT would open a second copy of it.
+# The CRT opens a plain shell instead. Point this at a session file to get tabs, or delete
+# the line to reuse the session from kitty.conf.
+startup_session none
+
+# The shader (files in <kitty config dir>/shaders):
+#   retro-crt             a still picture: nothing redraws while idle (~0 W)
+#   retro-crt crt-live    + afterglow, snow, flicker, hsync wobble. kitty redraws at 60 fps;
+#                         measured ~+16 W GPU while a window is visible. Unplugged? use the line above
+# ctrl+shift+f12 switches between them without restarting (takes ~8 s: the shader is rebuilt).
+custom_shaders retro-crt crt-live
+
+# The monitor is chosen at run time, so switching never rebuilds a shader: the shader
+# holds all of them and reads the choice from kitty's `background` colour, an offset
+# from black that nobody can see (blue = monitor 0..4 = amber green white ice color,
+# red bit 0 = flat). That needs kitty's background to stay #000000, its default.
+#   ctrl+alt+1..5   pick a monitor. kitty's own set_colors action, no process involved
+#   ctrl+alt+m      picker with live preview (enter keeps it, s also makes it the default, esc reverts)
+#   ctrl+alt+n      next monitor
+#   ctrl+shift+f4   flat on or off: no curvature or bezel, exact mouse selection
+# `crt green`, `crt next`, `crt` (the picker) also work typed in any kitty-crt shell.
+map ctrl+alt+1 set_colors --all --configured background=#000000
+map ctrl+alt+2 set_colors --all --configured background=#000001
+map ctrl+alt+3 set_colors --all --configured background=#000002
+map ctrl+alt+4 set_colors --all --configured background=#000003
+map ctrl+alt+5 set_colors --all --configured background=#000004
+map ctrl+alt+m launch --type=overlay @BIN@/crt pick
+map ctrl+alt+n launch --type=background --allow-remote-control @BIN@/crt next
+map ctrl+shift+f4 launch --type=background --allow-remote-control @BIN@/crt toggle-flat
+map ctrl+shift+f12 launch --type=background --allow-remote-control @BIN@/crt-switch toggle-live
+
+# The monitor kitty-crt starts on: written by `crt save` (or the picker's s key). One-off: CRT_MONITOR=green kitty-crt
+include crt-monitor.conf
+
+# `crt` typed in a kitty-crt shell talks to kitty through remote control, restricted to
+# reading and setting colours: any other remote control command is refused.
+allow_remote_control password
+remote_control_password "" get-colors set-colors
+
+# Custom shaders need an opaque window. The bezel and rounded glass hide the outer
+# ~25 px, so keep text off them.
+background_opacity 1
+window_padding_width 14
