@@ -1,0 +1,242 @@
+#!/usr/bin/env python3
+"""crt: choose the monitor of the running kitty-crt window, instantly.
+
+  crt                    pick from a list with live preview (enter keeps it, esc puts it back)
+  crt green              switch to a monitor: amber green white ice color
+  crt next | prev        step through them
+  crt flat | curved | toggle-flat
+  crt list | status
+  crt save               make the current monitor the one kitty-crt starts on
+  crt code NAME          print the background colour that selects NAME (used by kitty-crt)
+
+Nothing is rebuilt: the shader already holds every monitor and reads the choice from
+kitty's `background` colour, an offset from black that nobody can see (blue = monitor
+number, red bit 0 = flat). This command sets that colour through kitty's remote control
+(crt.conf allows get-colors and set-colors and nothing else), so a switch takes one frame.
+The ctrl+alt+1..5 keys set the same colour with kitty's own set_colors action.
+"""
+import contextlib
+import os
+import select
+import subprocess
+import sys
+import termios
+import tty
+
+MONITORS = ("amber", "green", "white", "ice", "color")
+DESCRIPTIONS = {
+    "amber": "warm amber phosphor (the default)",
+    "green": "P1 green, long afterglow",
+    "white": "paper-white monochrome",
+    "ice": "cold cyan, heavy bloom",
+    "color": "full colour: aperture grille, convergence error",
+}
+KITTEN = os.environ.get("KITTY_CRT_KITTEN") or os.path.expanduser("~/.local/kitty.app/bin/kitten")
+CONF = os.path.join(os.environ.get("KITTY_CONFIG_DIRECTORY") or os.path.expanduser("~/.config/kitty"), "crt-monitor.conf")
+
+
+class CrtError(Exception):
+    pass
+
+
+def code(monitor, flat=False):
+    return "#%02x00%02x" % (int(flat), monitor)
+
+
+def channel_fds():
+    """`launch --allow-remote-control` (the key bindings) hands this process a private channel to kitty as
+    KITTY_LISTEN_ON=fd:N. subprocess closes every fd above 2 in a child unless told otherwise, so without this
+    kitten @ would find a dead descriptor and the key would silently do nothing."""
+    listen = os.environ.get("KITTY_LISTEN_ON", "")
+    return (int(listen[3:]),) if listen.startswith("fd:") and listen[3:].isdigit() else ()
+
+
+def kitten(*args):
+    try:
+        cp = subprocess.run([KITTEN, "@", *args], capture_output=True, text=True, timeout=10, pass_fds=channel_fds())
+    except FileNotFoundError:
+        raise CrtError(f"{KITTEN} not found; kitty >= 0.49 is required")
+    if cp.returncode != 0:
+        lines = cp.stderr.strip().splitlines()
+        raise CrtError("cannot reach kitty, run this in a kitty-crt window" + (f" ({lines[-1]})" if lines else ""))
+    return cp.stdout
+
+
+def report(err):
+    print(f"crt: {err}", file=sys.stderr)
+    if not sys.stderr.isatty():  # started by a key binding in the background: nobody is reading stderr
+        with contextlib.suppress(OSError):
+            subprocess.run(["notify-send", "-a", "kitty-crt", "-t", "6000", "CRT", str(err)], timeout=5)
+
+
+def decode(value):
+    """(monitor, flat) selected by a background colour such as '#000001'. The shader applies the same rule."""
+    r, g, b = (int(value[i : i + 2], 16) for i in (1, 3, 5))
+    if max(r, g, b) > 15 or b >= len(MONITORS):
+        raise CrtError(
+            f"kitty's background is {value}. Monitors are selected through a background of #000000 plus a tiny code, "
+            "so switching needs the default black background."
+        )
+    return b, bool(r & 1)
+
+
+def get_state():
+    """(monitor, flat) currently selected."""
+    value = None
+    for line in kitten("get-colors", "--configured").splitlines():
+        fields = line.split()
+        if len(fields) == 2 and fields[0] == "background":
+            value = fields[1]
+    if not value:
+        raise CrtError("kitty did not report a background colour")
+    return decode(value)
+
+
+def set_state(monitor, flat):
+    kitten("set-colors", "--all", "--configured", f"background={code(monitor, flat)}")
+
+
+def describe(monitor, flat):
+    return MONITORS[monitor] + (" (flat)" if flat else "")
+
+
+def save(monitor, flat):
+    """Make kitty-crt start on this monitor: crt.conf includes this file."""
+    with open(CONF, "w") as f:
+        f.write("# written by `crt save`: the monitor kitty-crt starts on\n")
+        f.write(f"background {code(monitor, flat)}\n")
+
+
+# ---------------------------------------------------------------------------
+# the picker
+# ---------------------------------------------------------------------------
+
+
+def read_key(fd):
+    ch = os.read(fd, 1)
+    if ch != b"\x1b":
+        return ch.decode(errors="replace")
+    if not select.select([fd], [], [], 0.05)[0]:
+        return "ESC"
+    rest = os.read(fd, 8)
+    return {b"[A": "UP", b"[B": "DOWN", b"OA": "UP", b"OB": "DOWN"}.get(rest[:2], "")
+
+
+def pick():
+    if not sys.stdin.isatty():
+        raise CrtError("the picker needs a terminal")
+    start = get_state()
+    cur, flat = start
+    fd = sys.stdin.fileno()
+    saved = termios.tcgetattr(fd)
+    out = sys.stdout
+
+    def fg(rgb, text):
+        return "\x1b[38;2;%d;%d;%dm%s\x1b[0m" % (*rgb, text)
+
+    def show():
+        lines = ["", "  MONITOR    up/down or j/k, 1-%d pick, f flat, enter keep, s keep + make default, esc revert" % len(MONITORS), ""]
+        for i, name in enumerate(MONITORS):
+            row = "%s %d  %-6s %s" % (">" if i == cur else " ", i + 1, name, DESCRIPTIONS[name])
+            lines.append("  " + ("\x1b[7m" + row + " \x1b[0m" if i == cur else row))
+        lines += [
+            "",
+            "  flat: %s" % ("on: no curvature or bezel, exact mouse selection" if flat else "off"),
+            "",
+            "  " + fg((120, 220, 120), "\u2714 read ") + "~/.config/kitty/kitty.conf   " + fg((240, 200, 60), "\u25cf edit ") + "retro-crt.slang   " + fg((240, 90, 90), "\u2718 bash ") + "slangc: error",
+            "  The quick brown fox jumps over the lazy dog. 0123456789 {}[]<>=+-*/",
+            "  " + "".join("\x1b[48;2;%d;%d;%dm " % (v, v, v) for v in range(0, 256, 6)) + "\x1b[0m  \u2591\u2592\u2593\u2588",
+            "  " + "".join("\x1b[48;2;%d;0;0m " % v for v in range(0, 256, 8)) + "".join("\x1b[48;2;0;%d;0m " % v for v in range(0, 256, 8)) + "".join("\x1b[48;2;0;0;%dm " % v for v in range(0, 256, 8)) + "\x1b[0m",
+        ]
+        out.write("\x1b[H\x1b[2J" + "\r\n".join(lines))
+        out.flush()
+
+    reverted = saved = False
+    try:
+        tty.setraw(fd)
+        out.write("\x1b[?1049h\x1b[?25l")
+        show()
+        while True:
+            key = read_key(fd)
+            if key in ("\r", "\n"):
+                break
+            if key in ("ESC", "q", "\x03"):
+                reverted = True
+                break
+            if key in ("UP", "k"):
+                cur = (cur - 1) % len(MONITORS)
+            elif key in ("DOWN", "j", "\t"):
+                cur = (cur + 1) % len(MONITORS)
+            elif key == "f":
+                flat = not flat
+            elif key.isdigit() and 1 <= int(key) <= len(MONITORS):
+                cur = int(key) - 1
+            elif key == "s":
+                save(cur, flat)
+                saved = True
+                break
+            else:
+                continue
+            set_state(cur, flat)
+            show()
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, saved)
+        out.write("\x1b[?25h\x1b[?1049l")
+        out.flush()
+        if reverted and (cur, flat) != start:
+            set_state(*start)
+    return "reverted to " + describe(*start) if reverted else "kept " + describe(cur, flat) + (", and saved as the default" if saved else "")
+
+
+# ---------------------------------------------------------------------------
+
+
+def main(argv):
+    cmd = argv[0] if argv else ("pick" if sys.stdin.isatty() else "status")
+    if cmd in ("-h", "--help", "help"):
+        print(__doc__.strip())
+        return
+    if cmd == "list":
+        for i, name in enumerate(MONITORS):
+            print(f"{i + 1} {name}")
+        return
+    if cmd == "code":
+        if len(argv) != 2 or argv[1] not in MONITORS:
+            raise CrtError("usage: crt code " + "|".join(MONITORS))
+        print(code(MONITORS.index(argv[1])))
+        return
+    if cmd == "pick":
+        print(pick())
+        return
+    monitor, flat = get_state()
+    if cmd == "status":
+        print(describe(monitor, flat))
+        return
+    if cmd == "save":
+        save(monitor, flat)
+        print("saved: kitty-crt now starts on " + describe(monitor, flat))
+        return
+    if cmd in MONITORS:
+        monitor = MONITORS.index(cmd)
+    elif cmd == "next":
+        monitor = (monitor + 1) % len(MONITORS)
+    elif cmd == "prev":
+        monitor = (monitor - 1) % len(MONITORS)
+    elif cmd == "flat":
+        flat = True
+    elif cmd == "curved":
+        flat = False
+    elif cmd == "toggle-flat":
+        flat = not flat
+    else:
+        raise CrtError(f"unknown command {cmd!r}; try crt --help")
+    set_state(monitor, flat)
+    print(describe(monitor, flat))
+
+
+if __name__ == "__main__":
+    try:
+        main(sys.argv[1:])
+    except CrtError as err:
+        report(err)
+        sys.exit(1)
