@@ -15,7 +15,7 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: shellcheck
         run: shellcheck -x install.sh tools/shots.sh bin/kitty-crt bin/omp-crt bin/crt-switch
@@ -25,7 +25,7 @@ jobs:
 
       - name: restore kitty
         id: kitty-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/kitty
           key: kitty-${{ env.KITTY_VERSION }}
