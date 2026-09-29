@@ -1,0 +1,51 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  KITTY_VERSION: "0.49.1"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: shellcheck
+        run: shellcheck -x install.sh tools/shots.sh bin/kitty-crt bin/omp-crt bin/crt-switch
+
+      - name: contract tests (shader, CLI and key bindings agree)
+        run: python3 -m unittest discover -s tests -v
+
+      - name: restore kitty
+        id: kitty-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/kitty
+          key: kitty-${{ env.KITTY_VERSION }}
+
+      - name: install kitty
+        if: steps.kitty-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/kitty
+          curl -fsSL "https://github.com/kovidgoyal/kitty/releases/download/v${KITTY_VERSION}/kitty-${KITTY_VERSION}-x86_64.txz" | tar -xJ -C ~/kitty
+
+      - name: compile the shaders exactly as kitty does (slangc -warnings-as-errors all)
+        run: |
+          ~/kitty/bin/kitty --version
+          KITTY_CONFIG_DIRECTORY="$PWD" CRT_MODE=check ~/kitty/bin/kitty +runpy "exec(open('tools/shader-build.py').read(), {})"
+
+      - name: installer round trip
+        run: |
+          args=(--kitty "$HOME/kitty/bin/kitty" --prefix "$RUNNER_TEMP/p" --config-dir "$RUNNER_TEMP/c" --apps-dir "$RUNNER_TEMP/a")
+          ./install.sh "${args[@]}" --no-prewarm
+          test "$("$RUNNER_TEMP/p/bin/crt" code green)" = "#000001"
+          grep -q "$RUNNER_TEMP/p/bin/crt pick" "$RUNNER_TEMP/c/crt.conf"
+          ./install.sh "${args[@]}" --uninstall
+          test -z "$(find "$RUNNER_TEMP/p" "$RUNNER_TEMP/c" "$RUNNER_TEMP/a" -type f -o -type l)"
